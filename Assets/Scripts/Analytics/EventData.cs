@@ -4,7 +4,7 @@ using Newtonsoft.Json;
 namespace Analytics
 {
     [Serializable]
-    public struct EventData
+    public struct EventData : IEventDataModel
     {
         [JsonProperty("type")] public string Type { get; }
         [JsonProperty("data")] public string Data { get; }

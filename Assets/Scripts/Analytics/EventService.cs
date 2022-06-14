@@ -11,7 +11,7 @@ using UnityEngine;
 
 namespace Analytics
 {
-    public class EventService
+    public class EventService : IEventService
     {
         private const string URL = "https://vk.com";
         private const string LOGS_BASE_DIRECTORY = "event_logs";
@@ -22,28 +22,25 @@ namespace Analytics
         private readonly HttpClient _client = new HttpClient();
         
         private bool _sendMessagesInProgress;
-        private Task _saveEventsToFileTask;
         private Task _sendMessagesTask;
         private CancellationTokenSource _sendingMessagesCancellationTokenSource;
-        private CancellationTokenSource _sendSavedMessagesCancellationTokenSource;
 
-        public async Task Initialize()
+        public async void Initialize()
         {
+            _sendingMessagesCancellationTokenSource = new CancellationTokenSource();
+            
             _logStoragePath = Path.Combine(Application.persistentDataPath, LOGS_BASE_DIRECTORY, "influx_logs_storage");
             
             CreateLogsDirectoriesIfNotExist();
             
-            _sendSavedMessagesCancellationTokenSource = new CancellationTokenSource();
-            await TrySendMessagesFromSendingFolder(_sendSavedMessagesCancellationTokenSource.Token);
+            await TrySendMessagesFromSendingFolder();
             
-            _sendingMessagesCancellationTokenSource = new CancellationTokenSource();
             StartSendingMessages(_sendingMessagesCancellationTokenSource.Token);
         }
 
         public void Deinitialize()
         {
             _sendingMessagesCancellationTokenSource.Cancel();
-            _sendSavedMessagesCancellationTokenSource.Cancel();
         }
 
         public void TrackEvent(string type, string data)
@@ -53,15 +50,7 @@ namespace Analytics
         
         public async void TrackEvent(EventData eventData)
         {
-            if (_saveEventsToFileTask != null)
-            {
-                while (!_saveEventsToFileTask.IsCompleted)
-                {
-                    await Task.Yield();
-                }
-            }
-
-            _saveEventsToFileTask = Task.Run(() => SaveEventToSendingFile(eventData));
+            await SaveEventToSendingFile(eventData);
         }
 
         [SuppressMessage("ReSharper", "FunctionNeverReturns")]
@@ -78,7 +67,7 @@ namespace Analytics
                     continue;
                 }
                 
-                _sendMessagesTask = TrySendMessagesFromSendingFolder(token);
+                _sendMessagesTask = TrySendMessagesFromSendingFolder();
             }
         }
 
@@ -87,7 +76,7 @@ namespace Analytics
             Directory.CreateDirectory(_logStoragePath);
         }
 
-        private async void SaveEventToSendingFile(EventData eventData)
+        private async Task SaveEventToSendingFile(EventData eventData)
         {
             while (_sendMessagesInProgress)
             {
@@ -99,7 +88,7 @@ namespace Analytics
             File.WriteAllText(path, jsonString);
         }
         
-        private async Task TrySendMessagesFromSendingFolder(CancellationToken token)
+        private async Task TrySendMessagesFromSendingFolder()
         {
             _sendMessagesInProgress = true;
             
@@ -128,7 +117,7 @@ namespace Analytics
                 eventsToSend.Add(eventData);
             }
 
-            var isSuccess = await TrySendMessages(URL, eventsToSend, token);
+            var isSuccess = await TrySendMessages(URL, eventsToSend);
 
             if (isSuccess)
             {
@@ -138,15 +127,14 @@ namespace Analytics
             _sendMessagesInProgress = false;
         }
         
-        private async Task<bool> TrySendMessages(string url, List<EventData> events, CancellationToken token)
+        private async Task<bool> TrySendMessages(string url, List<EventData> events)
         {
-            if (token.IsCancellationRequested) return false;
-            
             var content = new KeyValuePair<string, List<EventData>>("events", events);
             var json = JsonConvert.SerializeObject(content);
             var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
 
-            var response = await _client.PostAsync(url, httpContent, token);
+            var response = await _client.PostAsync(url, httpContent);
+            
             return response.IsSuccessStatusCode;
         }
         
